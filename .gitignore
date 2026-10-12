@@ -1,0 +1,25 @@
+# Dataset derived/modified data directory (Strict Rule: never modify dataset/)
+dataset_cpy/
+
+# Prediction outputs and experimental logs
+predictions/
+logs/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environment and IDE
+.venv/
+venv/
+ENV/
+.idea/
+.vscode/
+.env
+
+# System
+.DS_Store
+*.swp
