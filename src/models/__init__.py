@@ -7,6 +7,13 @@ from .reading_order import (
 from .ocr import RapidOCREngine
 from .baseline_predictor import RapidOCRBaselinePredictor
 from .clustering import TextCluster, cluster_text_regions, should_merge_lines
+from .filtering import (
+    FEATURE_NAMES,
+    extract_cluster_features,
+    LearnedClusterClassifier,
+    LearnedNarrationClassifier,
+    FilterModelConfig,
+)
 
 __all__ = [
     "BoundingBox",
@@ -18,5 +25,10 @@ __all__ = [
     "TextCluster",
     "cluster_text_regions",
     "should_merge_lines",
+    "FEATURE_NAMES",
+    "extract_cluster_features",
+    "LearnedClusterClassifier",
+    "LearnedNarrationClassifier",
+    "FilterModelConfig",
 ]
 

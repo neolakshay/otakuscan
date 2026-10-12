@@ -23,3 +23,5 @@ ENV/
 # System
 .DS_Store
 *.swp
+models/
+dataset/
