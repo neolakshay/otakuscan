@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from PIL import Image
 
 from src.data.loader import SequenceRecord, OtakuDatasetLoader
 from .ocr import RapidOCREngine, DetectedRegion
-from .reading_order import sort_reading_order
+from .reading_order import sort_reading_order, sort_panel_aware_reading_order
 from .clustering import cluster_text_regions, TextCluster
 
 class RapidOCRBaselinePredictor:
@@ -19,23 +19,34 @@ class RapidOCRBaselinePredictor:
     - Preserves punctuation-only speech ("...", "!", "?") if detected.
     - No arbitrary score filtering: min_confidence defaults to 0.0 to retain all detected candidates.
     - Reproducible: enable_clustering toggle allows running unclustered vs clustered variants identically.
+    - Panel-Aware: reading_order_mode allows toggling between 'row_band' and 'panel_aware'.
     """
 
     def __init__(
         self,
         ocr_engine: Optional[RapidOCREngine] = None,
-        reading_order_sorter: Callable[[List[Any]], List[Any]] = sort_reading_order,
+        reading_order_sorter: Optional[Callable[[List[Any]], List[Any]]] = None,
+        reading_order_mode: str = "panel_aware",
         default_speaker: str = "character1",
         min_confidence: float = 0.0,
         enable_clustering: bool = False,
         clustering_fn: Optional[Callable[[List[DetectedRegion]], List[TextCluster]]] = None,
     ) -> None:
         self.ocr_engine = ocr_engine if ocr_engine is not None else RapidOCREngine()
-        self.reading_order_sorter = reading_order_sorter
+        self.reading_order_mode = reading_order_mode
+        if reading_order_sorter is not None:
+            self.reading_order_sorter = reading_order_sorter
+        elif reading_order_mode == "row_band":
+            self.reading_order_sorter = sort_reading_order
+        else:
+            self.reading_order_sorter = sort_panel_aware_reading_order
+
         self.default_speaker = default_speaker
         self.min_confidence = min_confidence
+
         self.enable_clustering = enable_clustering
         self.clustering_fn = clustering_fn if clustering_fn is not None else cluster_text_regions
+
 
     def predict_images(self, images: List[Image.Image]) -> List[List[Dict[str, str]]]:
         """Predict dialogue transcription across a sequence of images (usually 3 pages)."""

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 @dataclass(frozen=True)
 class BoundingBox:
@@ -93,3 +93,105 @@ def sort_reading_order(
         ordered_regions.extend(row_sorted)
 
     return ordered_regions
+
+def sort_panel_aware_reading_order(
+    regions: List[Any],
+    min_gutter_x: float = 25.0,
+    min_gutter_y: float = 40.0,
+) -> List[Any]:
+    """Sort text regions using recursive spatial decomposition (Hierarchical XY-Cut).
+    
+    Algorithm:
+    1. Base Case: 0 or 1 item returns as-is.
+    2. Horizontal Cuts (Tiers):
+       Find whitespace gaps across the y-axis separating upper and lower bounding box sets.
+       If horizontal cuts exist, partition into tiers ordered strictly Top-to-Bottom.
+       Recursively sort each tier.
+    3. Vertical Cuts (Columns):
+       If no horizontal cut divides the current region, find whitespace gaps across the x-axis.
+       If vertical cuts exist, partition into columns ordered Right-to-Left (manga convention).
+       Recursively sort each column (ensuring vertically stacked bubbles inside a right panel
+       are completely traversed before advancing to the left panel).
+    4. Fallback:
+       If neither dimension provides clean gutter separation, sort using the robust
+       horizontal row-band + right-to-left within row sorter (`sort_reading_order`).
+    """
+    if len(regions) <= 1:
+        return list(regions)
+
+    # 1. Sweep vertically for horizontal cuts (tiers across the current block)
+    sorted_by_y = sorted(regions, key=lambda r: (r.bbox.ymin, r.bbox.xmin))
+    h_cuts = []
+    max_y = sorted_by_y[0].bbox.ymax
+    for item in sorted_by_y[1:]:
+        if item.bbox.ymin >= max_y + min_gutter_y:
+            h_cuts.append((max_y, item.bbox.ymin))
+            max_y = item.bbox.ymax
+        else:
+            max_y = max(max_y, item.bbox.ymax)
+
+    if h_cuts:
+        tiers: List[List[Any]] = []
+        cur_tier: List[Any] = []
+        cur_max_y = sorted_by_y[0].bbox.ymax
+        for item in sorted_by_y:
+            if cur_tier and item.bbox.ymin >= cur_max_y + min_gutter_y:
+                tiers.append(cur_tier)
+                cur_tier = [item]
+                cur_max_y = item.bbox.ymax
+            else:
+                cur_tier.append(item)
+                cur_max_y = max(cur_max_y, item.bbox.ymax)
+        if cur_tier:
+            tiers.append(cur_tier)
+
+        if len(tiers) > 1:
+            sorted_tiers: List[Any] = []
+            for t in tiers:
+                sorted_tiers.extend(sort_panel_aware_reading_order(
+                    t,
+                    min_gutter_x=min_gutter_x,
+                    min_gutter_y=min_gutter_y,
+                ))
+            return sorted_tiers
+
+    # 2. Sweep horizontally for vertical cuts (columns within the current block)
+    sorted_by_x = sorted(regions, key=lambda r: (r.bbox.xmin, r.bbox.ymin))
+    v_cuts = []
+    max_x = sorted_by_x[0].bbox.xmax
+    for item in sorted_by_x[1:]:
+        if item.bbox.xmin >= max_x + min_gutter_x:
+            v_cuts.append((max_x, item.bbox.xmin))
+            max_x = item.bbox.xmax
+        else:
+            max_x = max(max_x, item.bbox.xmax)
+
+    if v_cuts:
+        cols: List[List[Any]] = []
+        cur_col: List[Any] = []
+        cur_max_x = sorted_by_x[0].bbox.xmax
+        for item in sorted_by_x:
+            if cur_col and item.bbox.xmin >= cur_max_x + min_gutter_x:
+                cols.append(cur_col)
+                cur_col = [item]
+                cur_max_x = item.bbox.xmax
+            else:
+                cur_col.append(item)
+                cur_max_x = max(cur_max_x, item.bbox.xmax)
+        if cur_col:
+            cols.append(cur_col)
+
+        if len(cols) > 1:
+            sorted_cols: List[Any] = []
+            # Manga convention: rightmost column first (descending x)
+            for c in reversed(cols):
+                sorted_cols.extend(sort_panel_aware_reading_order(
+                    c,
+                    min_gutter_x=min_gutter_x,
+                    min_gutter_y=min_gutter_y,
+                ))
+            return sorted_cols
+
+    # 3. Fallback: local row-band sorter
+    return sort_reading_order(regions)
+
