@@ -131,6 +131,7 @@ def parse_vlm_output(raw_output: str) -> List[Dict[str, str]]:
 def select_pilot_training_pages(
     project_root: Path | str,
     n_pages: int = 3,
+    dataset_root: Optional[Path | str] = None,
 ) -> List[Dict[str, Any]]:
     """Selects a small, controlled set of pilot development pages strictly from Fold 0 train split.
     
@@ -139,6 +140,7 @@ def select_pilot_training_pages(
     - Never touches unlabelled test sequences.
     """
     root = Path(project_root).resolve()
+    d_root = Path(dataset_root).resolve() if dataset_root is not None else (root / "dataset")
     splits_path = root / "splits" / "dev_splits.json"
     with open(splits_path, "r", encoding="utf-8") as f:
         splits_data = json.load(f)
@@ -146,7 +148,7 @@ def select_pilot_training_pages(
     train_ids = splits_data["kfold_5"][0]["train"]
     val_ids = set(splits_data["kfold_5"][0]["val"])
 
-    loader = OtakuDatasetLoader(root / "dataset")
+    loader = OtakuDatasetLoader(d_root)
     seq_records = {s.sequence_id: s for s in loader.load_sequences()}
     all_labels = loader.load_labels(split="development")
 
@@ -312,9 +314,11 @@ def run_vlm_on_page(
 
 def run_pilot_experiment(
     project_root: Path | str = colab_root,
+    dataset_root: Optional[Path | str] = None,
     model_id: str = "Qwen/Qwen2-VL-2B-Instruct",
     n_pages: int = 3,
     output_json: Optional[Path | str] = None,
+    require_gpu: bool = False,
 ) -> Dict[str, Any]:
     """Runs a controlled pilot comparing RapidOCR vs Qwen2-VL on permitted development pages."""
     root = Path(project_root).resolve()
@@ -330,7 +334,13 @@ def run_pilot_experiment(
     print(f"Target Device:  {device} ({gpu_name})")
     print(f"Available VRAM: {vram_gb:.2f} GB")
 
-    pilot_pages = select_pilot_training_pages(root, n_pages=n_pages)
+    if require_gpu and device != "cuda":
+        raise RuntimeError(
+            "CUDA GPU is required for the VLM experiment, but no GPU was detected!\n"
+            "In Google Colab, select: Runtime > Change runtime type > T4 GPU."
+        )
+
+    pilot_pages = select_pilot_training_pages(root, n_pages=n_pages, dataset_root=dataset_root)
     print(f"\nSelected {len(pilot_pages)} pilot pages strictly from Fold 0 training split:")
     for i, p in enumerate(pilot_pages):
         print(f"  [{i+1}] Seq: {p['sequence_id']} | Page: {p['page_index']} | File: {Path(p['image_path']).name}")
@@ -440,7 +450,16 @@ if __name__ == "__main__":
     parser.add_argument("--pages", type=int, default=3, help="Number of pilot pages to evaluate")
     parser.add_argument("--model", type=str, default="Qwen/Qwen2-VL-2B-Instruct")
     parser.add_argument("--output", type=str, default="", help="Path to output JSON")
+    parser.add_argument("--dataset_root", type=str, default="", help="Path to dataset root")
+    parser.add_argument("--require_gpu", action="store_true", help="Raise error if CUDA GPU is not available")
     args = parser.parse_args()
 
     out_file = Path(args.output) if args.output else None
-    run_pilot_experiment(n_pages=args.pages, model_id=args.model, output_json=out_file)
+    d_root = Path(args.dataset_root) if args.dataset_root else None
+    run_pilot_experiment(
+        n_pages=args.pages,
+        model_id=args.model,
+        output_json=out_file,
+        dataset_root=d_root,
+        require_gpu=args.require_gpu,
+    )

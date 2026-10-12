@@ -219,4 +219,17 @@ def run_colab_training(
 
 
 if __name__ == "__main__":
-    run_colab_training()
+    import argparse
+    parser = argparse.ArgumentParser(description="Colab Classifier Training & Verification")
+    parser.add_argument("--dataset_root", type=str, default="", help="Path to dataset root")
+    parser.add_argument("--output_dir", type=str, default="", help="Path to models output directory")
+    parser.add_argument("--no_grid_search", action="store_true", help="Skip hyperparameter grid search")
+    args = parser.parse_args()
+
+    d_root = Path(args.dataset_root).resolve() if args.dataset_root else (colab_root / "dataset")
+    out_dir = Path(args.output_dir).resolve() if args.output_dir else (colab_root / "models")
+    run_colab_training(
+        dataset_root=d_root,
+        output_dir=out_dir,
+        run_grid_search=not args.no_grid_search,
+    )
