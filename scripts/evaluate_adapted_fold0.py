@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
 import tracemalloc
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
@@ -17,15 +18,21 @@ from src.models.baseline_predictor import RapidOCRBaselinePredictor
 from src.eval.scorer import validate_submission_data
 
 
-def run_adapted_evaluation() -> Dict[str, Any]:
-    dataset_root = project_root / "dataset"
-    splits_file = project_root / "splits" / "dev_splits.json"
+def run_adapted_evaluation(
+    dataset_root: Path | str = project_root / "dataset",
+    splits_file: Path | str = project_root / "splits" / "dev_splits.json",
+    models_dir: Path | str = project_root / "models",
+    predictions_dir: Optional[Path | str] = None,
+    logs_dir: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    dataset_root = Path(dataset_root).resolve()
+    splits_file = Path(splits_file).resolve()
+    models_dir = Path(models_dir).resolve()
     
-    predictions_dir = project_root / "predictions"
-    logs_dir = project_root / "logs"
-    models_dir = project_root / "models"
-    predictions_dir.mkdir(exist_ok=True)
-    logs_dir.mkdir(exist_ok=True)
+    pred_dir = Path(predictions_dir).resolve() if predictions_dir is not None else project_root / "predictions"
+    log_dir = Path(logs_dir).resolve() if logs_dir is not None else project_root / "logs"
+    pred_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     with open(splits_file, "r", encoding="utf-8") as f:
         splits_data = json.load(f)
@@ -110,7 +117,7 @@ def run_adapted_evaluation() -> Dict[str, Any]:
     validate_submission_data(prediction_rows, expected_pages=3)
 
     # Write predictions artifact (immutably outside dataset/)
-    pred_path = predictions_dir / "adapted_fold0.jsonl"
+    pred_path = pred_dir / "adapted_fold0.jsonl"
     with open(pred_path, "w", encoding="utf-8") as f:
         for row in prediction_rows:
             f.write(json.dumps(row) + "\n")
@@ -122,21 +129,24 @@ def run_adapted_evaluation() -> Dict[str, Any]:
         predictor=lambda seq: next(r["pages"] for r in prediction_rows if r["sequence_id"] == seq.sequence_id),
     )
 
-    # Load previous baseline reports for comparative audit
-    baseline_log_path = logs_dir / "baseline_fold0_eval.json"
-    with open(baseline_log_path, "r", encoding="utf-8") as f:
-        baseline_log = json.load(f)
-    baseline_macro = baseline_log["summary"]["macro_metrics_baseline"]
+    # Load previous baseline reports for comparative audit if available
+    baseline_log_path = log_dir / "baseline_fold0_eval.json"
+    baseline_macro = {}
+    if baseline_log_path.is_file():
+        with open(baseline_log_path, "r", encoding="utf-8") as f:
+            baseline_macro = json.load(f)["summary"]["macro_metrics_baseline"]
 
-    clustered_log_path = logs_dir / "clustered_fold0_eval.json"
-    with open(clustered_log_path, "r", encoding="utf-8") as f:
-        clustered_log = json.load(f)
-    clustered_macro = clustered_log["summary"]["macro_metrics_clustered"]
+    clustered_log_path = log_dir / "clustered_fold0_eval.json"
+    clustered_macro = {}
+    if clustered_log_path.is_file():
+        with open(clustered_log_path, "r", encoding="utf-8") as f:
+            clustered_macro = json.load(f)["summary"]["macro_metrics_clustered"]
 
-    panel_order_log_path = logs_dir / "panel_order_fold0_eval.json"
-    with open(panel_order_log_path, "r", encoding="utf-8") as f:
-        panel_order_log = json.load(f)
-    panel_order_macro = panel_order_log["summary"]["macro_metrics_panel_order"]
+    panel_order_log_path = log_dir / "panel_order_fold0_eval.json"
+    panel_order_macro = {}
+    if panel_order_log_path.is_file():
+        with open(panel_order_log_path, "r", encoding="utf-8") as f:
+            panel_order_macro = json.load(f)["summary"]["macro_metrics_panel_order"]
 
     summary_results = {
         "fold": 0,
@@ -156,7 +166,7 @@ def run_adapted_evaluation() -> Dict[str, Any]:
         "macro_metrics_baseline": baseline_macro,
     }
 
-    log_path = logs_dir / "adapted_fold0_eval.json"
+    log_path = log_dir / "adapted_fold0_eval.json"
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump({
             "summary": summary_results,
@@ -167,8 +177,56 @@ def run_adapted_evaluation() -> Dict[str, Any]:
     return summary_results
 
 
-if __name__ == "__main__":
-    results = run_adapted_evaluation()
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Evaluate the adapted RapidOCR pipeline on Fold 0 validation sequences."
+    )
+    parser.add_argument(
+        "--dataset-root",
+        "--dataset_root",
+        type=Path,
+        default=project_root / "dataset",
+        help="Path to dataset root (default: <project_root>/dataset)",
+    )
+    parser.add_argument(
+        "--splits-file",
+        "--splits_file",
+        type=Path,
+        default=project_root / "splits" / "dev_splits.json",
+        help="Path to splits definition JSON (default: <project_root>/splits/dev_splits.json)",
+    )
+    parser.add_argument(
+        "--models-dir",
+        "--models_dir",
+        "--weights-dir",
+        type=Path,
+        default=project_root / "models",
+        help="Path to model weights directory (default: <project_root>/models)",
+    )
+    parser.add_argument(
+        "--predictions-dir",
+        "--predictions_dir",
+        type=Path,
+        default=project_root / "predictions",
+        help="Path to output predictions directory (default: <project_root>/predictions)",
+    )
+    parser.add_argument(
+        "--logs-dir",
+        "--logs_dir",
+        type=Path,
+        default=project_root / "logs",
+        help="Path to output logs directory (default: <project_root>/logs)",
+    )
+
+    args = parser.parse_args()
+
+    results = run_adapted_evaluation(
+        dataset_root=args.dataset_root,
+        splits_file=args.splits_file,
+        models_dir=args.models_dir,
+        predictions_dir=args.predictions_dir,
+        logs_dir=args.logs_dir,
+    )
     print("\n=== PHASE 3 ADAPTED PIPELINE EVALUATION: FOLD 0 ===")
     print(f"Runtime: {results['elapsed_seconds']}s ({results['seconds_per_page']}s/page)")
     print(f"Peak Memory: {results['peak_memory_mb']} MB")
@@ -179,7 +237,11 @@ if __name__ == "__main__":
     print(f"{'Metric':<30} {'Panel-Aware':<14} {'Adapted':<14} {'Delta':<12}")
     print("-" * 72)
     for k in ("balanced_joint_f1", "text_order_score", "matched_token_coverage", "speaker_accuracy_on_matched", "joint_f1"):
-        panel_val = results["macro_metrics_panel_order"].get(k, 0.0)
+        panel_val = results["macro_metrics_panel_order"].get(k, 0.0) if results["macro_metrics_panel_order"] else 0.0
         adapted_val = results["macro_metrics_adapted"].get(k, 0.0)
         delta = adapted_val - panel_val
         print(f"{k:<30} {panel_val:<14.4f} {adapted_val:<14.4f} {delta:+12.4f}")
+
+
+if __name__ == "__main__":
+    main()

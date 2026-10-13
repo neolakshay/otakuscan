@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import difflib
 import json
+import os
 import pickle
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image
 
@@ -235,7 +237,57 @@ def train_models(
     }
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Train dialogue filter and narration classifier using permitted development data."
+    )
+    parser.add_argument(
+        "--dataset-root",
+        "--dataset_root",
+        type=Path,
+        default=project_root / "dataset",
+        help="Path to dataset root directory (default: <project_root>/dataset)",
+    )
+    parser.add_argument(
+        "--splits-file",
+        "--splits_file",
+        type=Path,
+        default=project_root / "splits" / "dev_splits.json",
+        help="Path to splits definition JSON (default: <project_root>/splits/dev_splits.json)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "--output_dir",
+        "--models-dir",
+        type=Path,
+        default=project_root / "models",
+        help="Output directory to save trained weights JSON files (default: <project_root>/models)",
+    )
+    parser.add_argument(
+        "--cache-path",
+        "--cache_path",
+        type=Path,
+        default=None,
+        help="Optional path to cached training OCR detections pickle file",
+    )
+
+    args = parser.parse_args()
+
+    cache_arg = args.cache_path
+    if cache_arg is None:
+        # Check known scratch cache path if available locally
+        fallback_cache = Path("/home/neo/.gemini/antigravity-ide/brain/d2f41da8-3938-47b3-a22c-63f0984ed8b1/scratch/fold0_train_raw_detections.pkl")
+        if fallback_cache.is_file():
+            cache_arg = fallback_cache
+
+    train_models(
+        dataset_root=args.dataset_root,
+        splits_file=args.splits_file,
+        cache_path=cache_arg,
+        output_dir=args.output_dir,
+    )
+
+
 if __name__ == "__main__":
-    cache = Path("/home/neo/.gemini/antigravity-ide/brain/d2f41da8-3938-47b3-a22c-63f0984ed8b1/scratch/fold0_train_raw_detections.pkl")
-    cache_arg = cache if cache.is_file() else None
-    train_models(cache_path=cache_arg)
+    main()
+

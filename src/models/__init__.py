@@ -15,6 +15,8 @@ from .filtering import (
     FilterModelConfig,
 )
 
+from .segmentation import WordSegmenter, DEFAULT_COMMON_WORDS
+
 __all__ = [
     "BoundingBox",
     "DetectedRegion",
@@ -30,5 +32,8 @@ __all__ = [
     "LearnedClusterClassifier",
     "LearnedNarrationClassifier",
     "FilterModelConfig",
+    "WordSegmenter",
+    "DEFAULT_COMMON_WORDS",
 ]
+
 
