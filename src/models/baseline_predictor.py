@@ -15,6 +15,7 @@ from .filtering import (
     LearnedNarrationClassifier,
 )
 from .segmentation import WordSegmenter
+from .state_machine import ConversationalStateMachine
 
 CONVERSATIONAL_RESPONSE_WORDS: Set[str] = {
     "yes", "no", "yeah", "nope", "well", "huh", "what", "wait", "why",
@@ -61,6 +62,7 @@ class RapidOCRBaselinePredictor:
         word_segmenter: Optional[WordSegmenter] = None,
         word_segmenter_path: Optional[str | Path] = None,
         speaker_attribution_mode: str = "single",
+        state_machine: Optional[ConversationalStateMachine] = None,
     ) -> None:
         self.ocr_engine = ocr_engine if ocr_engine is not None else RapidOCREngine()
         self.reading_order_mode = reading_order_mode
@@ -108,6 +110,7 @@ class RapidOCRBaselinePredictor:
             self.word_segmenter = None
 
         self.speaker_attribution_mode = speaker_attribution_mode
+        self.state_machine = state_machine
 
     def predict_images(
         self,
@@ -117,6 +120,12 @@ class RapidOCRBaselinePredictor:
         """Predict dialogue transcription across a sequence of images (usually 3 pages)."""
         pages_output: List[List[Dict[str, str]]] = []
         curr_char = self.default_speaker
+
+        if self.speaker_attribution_mode == "conversational_state_machine":
+            if self.state_machine is not None:
+                self.state_machine.reset_sequence()
+            else:
+                self.state_machine = ConversationalStateMachine(default_speaker=self.default_speaker)
 
         for p_idx, img in enumerate(images):
             if cached_regions is not None and p_idx < len(cached_regions):
@@ -179,7 +188,10 @@ class RapidOCRBaselinePredictor:
 
                 is_narration = False
                 if self.enable_narration_classifier and self.narration_classifier is not None:
-                    feats = extract_cluster_features(item, page_width=pw, page_height=ph)
+                    if hasattr(self.narration_classifier, "extract_features"):
+                        feats = self.narration_classifier.extract_features(item, page_width=pw, page_height=ph)
+                    else:
+                        feats = extract_cluster_features(item, page_width=pw, page_height=ph)
                     prob_narr = self.narration_classifier.predict_single(feats)
                     if prob_narr >= self.narration_classifier.decision_threshold:
                         is_narration = True
@@ -196,46 +208,55 @@ class RapidOCRBaselinePredictor:
 
             page_dialogue_count = sum(1 for it in classified_items if not it["is_narration"])
             page_items: List[Dict[str, str]] = []
-            last_dialogue_item: Optional[Dict[str, Any]] = None
 
-            for it in classified_items:
-                if it["is_narration"]:
-                    speaker = "NARRATION"
-                else:
-                    if self.speaker_attribution_mode == "single":
-                        speaker = self.default_speaker
+            if self.speaker_attribution_mode == "conversational_state_machine":
+                page_speakers = self.state_machine.attribute_page(classified_items)
+                for it, speaker in zip(classified_items, page_speakers):
+                    page_items.append({
+                        "speaker": speaker,
+                        "text": it["text"],
+                    })
+            else:
+                last_dialogue_item: Optional[Dict[str, Any]] = None
 
-                    elif self.speaker_attribution_mode == "turn_alternating":
-                        speaker = curr_char
-                        curr_char = "character2" if curr_char == "character1" else "character1"
-
-                    elif self.speaker_attribution_mode == "spatial_clustering":
-                        speaker = "character1" if it["cx"] >= 0.50 else "character2"
-
-                    elif self.speaker_attribution_mode == "conversational_spatial":
-                        # Strategy F: Conversational + Spatial Transition
-                        if page_dialogue_count >= 4 and last_dialogue_item is not None:
-                            t_last = last_dialogue_item["text"].strip()
-                            t_curr = it["text"].strip()
-                            has_q = t_last.endswith("?") or "?" in t_last
-                            first_token = t_curr.split()[0].lower().strip(".,!?:;\"'") if t_curr.split() else ""
-                            is_response = first_token in CONVERSATIONAL_RESPONSE_WORDS
-                            dx = abs(it["cx"] - last_dialogue_item["cx"])
-                            dy = abs(it["cy"] - last_dialogue_item["cy"])
-                            is_spatial_jump = (dx > 0.40 and dy > 0.15)
-
-                            if (has_q or is_response) and is_spatial_jump:
-                                curr_char = "character2" if curr_char == "character1" else "character1"
-
-                        speaker = curr_char
-                        last_dialogue_item = it
+                for it in classified_items:
+                    if it["is_narration"]:
+                        speaker = "NARRATION"
                     else:
-                        speaker = self.default_speaker
+                        if self.speaker_attribution_mode == "single":
+                            speaker = self.default_speaker
 
-                page_items.append({
-                    "speaker": speaker,
-                    "text": it["text"],
-                })
+                        elif self.speaker_attribution_mode == "turn_alternating":
+                            speaker = curr_char
+                            curr_char = "character2" if curr_char == "character1" else "character1"
+
+                        elif self.speaker_attribution_mode == "spatial_clustering":
+                            speaker = "character1" if it["cx"] >= 0.50 else "character2"
+
+                        elif self.speaker_attribution_mode == "conversational_spatial":
+                            # Strategy F: Conversational + Spatial Transition
+                            if page_dialogue_count >= 4 and last_dialogue_item is not None:
+                                t_last = last_dialogue_item["text"].strip()
+                                t_curr = it["text"].strip()
+                                has_q = t_last.endswith("?") or "?" in t_last
+                                first_token = t_curr.split()[0].lower().strip(".,!?:;\"'") if t_curr.split() else ""
+                                is_response = first_token in CONVERSATIONAL_RESPONSE_WORDS
+                                dx = abs(it["cx"] - last_dialogue_item["cx"])
+                                dy = abs(it["cy"] - last_dialogue_item["cy"])
+                                is_spatial_jump = (dx > 0.40 and dy > 0.15)
+
+                                if (has_q or is_response) and is_spatial_jump:
+                                    curr_char = "character2" if curr_char == "character1" else "character1"
+
+                            speaker = curr_char
+                            last_dialogue_item = it
+                        else:
+                            speaker = self.default_speaker
+
+                    page_items.append({
+                        "speaker": speaker,
+                        "text": it["text"],
+                    })
 
             pages_output.append(page_items)
 

@@ -42,6 +42,16 @@ DEFAULT_COMMON_WORDS: Set[str] = {
 }
 
 
+# Forbidden single letters that are not valid standalone words in English dialogue
+FORBIDDEN_SINGLE_LETTERS: Set[str] = set("bcdefghjklmnopqrstuvwxyz")
+
+# Contraction fragments resulting from naive punctuation stripping
+CONTRACTION_FRAGMENTS: Set[str] = {
+    "s", "t", "m", "d", "re", "ve", "ll", "don", "ain", "didn",
+    "wasn", "isn", "won", "couldn", "shouldn", "wouldn"
+}
+
+
 class WordSegmenter:
     """Unigram Viterbi dynamic programming word segmenter for manga OCR text.
     
@@ -80,6 +90,8 @@ class WordSegmenter:
         token_counts: Dict[str, int],
         include_common_words: bool = True,
         common_word_prior_count: int = 100,
+        dict_words_path: Optional[str | Path] = "/usr/share/dict/words",
+        dict_word_prior_count: int = 5,
     ) -> WordSegmenter:
         """Fits vocabulary from token frequency counts.
         
@@ -87,16 +99,31 @@ class WordSegmenter:
             token_counts: Frequency dictionary of lowercased alphabetic tokens.
             include_common_words: If True, incorporates DEFAULT_COMMON_WORDS with a prior count.
             common_word_prior_count: Prior count added to each common word.
+            dict_words_path: Optional path to system dictionary for OOV fallback.
+            dict_word_prior_count: Prior count added to dictionary words.
         """
         vocab = Counter()
         for tok, cnt in token_counts.items():
             clean_tok = tok.lower().strip()
             if clean_tok.isalpha() and len(clean_tok) > 0:
-                vocab[clean_tok] += cnt
+                if clean_tok not in FORBIDDEN_SINGLE_LETTERS and clean_tok not in CONTRACTION_FRAGMENTS:
+                    vocab[clean_tok] += cnt
 
         if include_common_words:
             for w in DEFAULT_COMMON_WORDS:
                 vocab[w] += common_word_prior_count
+
+        if dict_words_path:
+            p = Path(dict_words_path)
+            if p.is_file():
+                try:
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            w = line.strip().lower()
+                            if w.isalpha() and len(w) >= 3 and w not in vocab and w not in CONTRACTION_FRAGMENTS:
+                                vocab[w] = dict_word_prior_count
+                except Exception:
+                    pass
 
         self.vocabulary = dict(vocab)
         self._total_words = sum(self.vocabulary.values())
@@ -109,6 +136,8 @@ class WordSegmenter:
         forbidden_val_test_ids: Optional[Set[str]] = None,
         include_common_words: bool = True,
         common_word_prior_count: int = 100,
+        dict_words_path: Optional[str | Path] = "/usr/share/dict/words",
+        dict_word_prior_count: int = 5,
     ) -> WordSegmenter:
         """Fits vocabulary strictly from permitted training sequences.
         
@@ -131,15 +160,19 @@ class WordSegmenter:
             for page in pages:
                 for item in page:
                     text = item.get("text", "")
-                    # Extract words using regex
-                    words = re.findall(r"[A-Za-z]+", text)
+                    words = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", text)
                     for w in words:
-                        token_counts[w.lower()] += 1
+                        clean_w = w.lower().strip()
+                        if clean_w.isalpha():
+                            if clean_w not in FORBIDDEN_SINGLE_LETTERS and clean_w not in CONTRACTION_FRAGMENTS:
+                                token_counts[clean_w] += 1
 
         return self.fit_from_token_counts(
             token_counts=token_counts,
             include_common_words=include_common_words,
             common_word_prior_count=common_word_prior_count,
+            dict_words_path=dict_words_path,
+            dict_word_prior_count=dict_word_prior_count,
         )
 
     def save_to_json(self, path: Path | str) -> None:
@@ -184,8 +217,8 @@ class WordSegmenter:
 
         lower = chunk.lower()
 
-        # If the word itself is already in the vocabulary, do NOT split
-        if lower in self.vocabulary and self.vocabulary[lower] >= 1:
+        # If the word itself is already in the vocabulary with high frequency, do NOT split
+        if lower in self.vocabulary and self.vocabulary[lower] >= 20:
             return chunk
 
         n = len(lower)
@@ -198,9 +231,15 @@ class WordSegmenter:
             min_i = max(0, j - self.max_subword_length)
             for i in range(min_i, j):
                 subword = lower[i:j]
+                # Disallow single letters unless they are valid English singletons ('a' or 'i')
+                if len(subword) == 1 and subword not in {"a", "i"}:
+                    continue
                 if subword in self.vocabulary:
                     freq = self.vocabulary[subword]
                     penalty = self.split_penalty if i > 0 else 0.0
+                    # Additional penalty for single-letter subwords to avoid spurious splitting
+                    if len(subword) == 1:
+                        penalty += 2.0
                     c = cost[i] + (-math.log(freq / total)) + penalty
                     if c < cost[j]:
                         cost[j] = c

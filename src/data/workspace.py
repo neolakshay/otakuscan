@@ -90,11 +90,7 @@ def extract_dataset_archive(
         return resolved
 
     if not arc.is_file():
-        raise FileNotFoundError(
-            f"Dataset archive not found at: {arc}\n"
-            "Action required: Upload your local 'dataset/' archive to Google Drive at:\n"
-            "  MyDrive/otakuscan-dataset/otakuscan-dataset.tar.gz"
-        )
+        raise FileNotFoundError(f"Dataset archive not found at: {arc}")
 
     print(f"Extracting dataset archive from {arc} to {target_dir}...")
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -109,78 +105,3 @@ def extract_dataset_archive(
     resolved = validate_dataset_directory(target_dir)
     print(f"Dataset extraction verified successfully at: {resolved}")
     return resolved
-
-
-def setup_colab_workspace(
-    repo_url: str = "https://github.com/neolakshay/otakuscan.git",
-    expected_drive_archive_rel: str = "otakuscan-dataset/otakuscan-dataset.tar.gz",
-    extract_target: Path | str = "/content/otakuscan-data/dataset",
-) -> Tuple[Path, Path]:
-    """Automates one-click workspace setup in Google Colab.
-    
-    Returns:
-        (project_root, dataset_root)
-    """
-    in_colab = "google.colab" in sys.modules
-
-    if in_colab:
-        print("Running in Google Colab environment.")
-        # 1. Mount Google Drive if not already mounted
-        drive_mount_root = Path("/content/drive")
-        my_drive = drive_mount_root / "MyDrive"
-
-        if not my_drive.is_dir():
-            print("Mounting Google Drive (please approve authorization modal if prompted)...")
-            from google.colab import drive  # type: ignore
-            drive.mount(str(drive_mount_root))
-
-        # 2. Locate or clone project repository
-        content_repo = Path("/content/otakuscan")
-        if (content_repo / "splits" / "dev_splits.json").is_file():
-            project_root = content_repo
-            print(f"Project repository already present at {project_root}")
-        else:
-            print(f"Cloning project repository from {repo_url} into {content_repo}...")
-            os.system(f"git clone {repo_url} {content_repo}")
-            project_root = content_repo
-
-        # 3. Locate dataset archive in Google Drive
-        primary_archive = my_drive / expected_drive_archive_rel
-        fallback_archive = my_drive / "otakuscan-dataset.tar.gz"
-
-        if primary_archive.is_file():
-            archive_path = primary_archive
-        elif fallback_archive.is_file():
-            archive_path = fallback_archive
-        else:
-            raise FileNotFoundError(
-                f"Dataset archive not found!\n"
-                f"Checked:\n"
-                f"  1. {primary_archive}\n"
-                f"  2. {fallback_archive}\n"
-                f"Please ensure you uploaded 'otakuscan-dataset.tar.gz' to your Google Drive in:\n"
-                f"  MyDrive/otakuscan-dataset/otakuscan-dataset.tar.gz"
-            )
-
-        # 4. Idempotently extract dataset archive
-        dataset_root = extract_dataset_archive(archive_path, extract_target)
-
-    else:
-        # Local development execution
-        project_root = Path.cwd().resolve()
-        # Search upward if cwd is a subfolder
-        while not (project_root / "splits" / "dev_splits.json").is_file() and project_root.parent != project_root:
-            project_root = project_root.parent
-
-        dataset_candidate = project_root / "dataset"
-        if is_valid_dataset_directory(dataset_candidate):
-            dataset_root = validate_dataset_directory(dataset_candidate)
-        else:
-            raise FileNotFoundError(f"Local dataset not found at {dataset_candidate}")
-
-    # Ensure project root is in sys.path
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-    os.chdir(project_root)
-    return project_root, dataset_root

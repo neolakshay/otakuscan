@@ -11,7 +11,6 @@ from src.data.workspace import (
     is_valid_dataset_directory,
     extract_dataset_archive,
 )
-from colab.vlm_manga_transcription_experiment import select_pilot_training_pages
 
 
 class TestWorkspaceDatasetValidation(unittest.TestCase):
@@ -82,22 +81,6 @@ class TestDatasetExtractionIdempotency(unittest.TestCase):
             self.assertEqual(resolved_1, resolved_2)
             self.assertTrue(canary.is_file(), "Extraction was not idempotent; canary file lost!")
             self.assertEqual(canary.read_text(), "reused")
-
-
-class TestPilotSelectionWithCustomDatasetRoot(unittest.TestCase):
-    def setUp(self) -> None:
-        self.project_root = Path(__file__).resolve().parent.parent
-
-    def test_select_pilot_pages_with_explicit_dataset_root(self) -> None:
-        custom_dataset_root = self.project_root / "dataset"
-        pages = select_pilot_training_pages(
-            self.project_root,
-            n_pages=2,
-            dataset_root=custom_dataset_root,
-        )
-        self.assertEqual(len(pages), 2)
-        for p in pages:
-            self.assertTrue(Path(p["image_path"]).is_file())
 
 
 if __name__ == "__main__":

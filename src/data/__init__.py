@@ -4,7 +4,6 @@ from .workspace import (
     is_valid_dataset_directory,
     extract_dataset_archive,
     resolve_dataset_root,
-    setup_colab_workspace,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "is_valid_dataset_directory",
     "extract_dataset_archive",
     "resolve_dataset_root",
-    "setup_colab_workspace",
 ]

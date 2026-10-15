@@ -220,14 +220,14 @@ python3 scripts/predict_test.py \
 
 ## 10. Test Suite Results
 
-The codebase includes comprehensive unit tests verifying data loading, OCR execution, clustering, reading order, classifier mathematics, official score bridging, Colab utilities, test prediction generation, and model packaging:
+The codebase includes comprehensive unit tests verifying data loading, OCR execution, clustering, reading order, classifier mathematics, official score bridging, test prediction generation, word segmentation, and model packaging:
 
 ```bash
 python3 -m unittest discover tests
 ```
 
 **Results:**
-- **75 tests passed, 0 failures, 0 errors** in ~3.8 seconds.
+- **84 tests passed, 0 failures, 0 errors** in ~3.7 seconds.
 
 ---
 
@@ -236,16 +236,34 @@ python3 -m unittest discover tests
 While OtakuScan meets all structural submission requirements and significantly outperforms baseline reading order and token coverage, several known technical limitations remain:
 
 1. **Speaker Attribution Conflation:**
-   - Without character facial recognition or visual speaker pointing models, the pipeline attributes dialogue to a single default identifier (`character1`), with narration boxes attributed as `NARRATION`.
-   - On sequences with multiple speaking characters, the Hungarian maximum-weight matching in `dataset/score.py` matches `character1` to the most verbose speaker, leaving other characters unmapped. This bounds `speaker_accuracy_on_matched` at ~54.1% and `balanced_joint_f1` at ~0.174.
+   - On sequences with multiple speaking characters, Hungarian maximum-weight matching in `dataset/score.py` matches predicted characters strictly 1-to-1 against reference speakers. Without character facial recognition or visual speaker pointing models, attributing dialogue across complex multi-party interactions remains challenging.
 2. **OCR Recognition Errors on Stylized Manga Fonts:**
-   - RapidOCR's PP-OCRv4 model occasionally struggles with hand-drawn sound effects (SFX), extreme vertical-rotated text, low-contrast screentones, and ornate gothic typography. This caps `matched_token_coverage` at ~67.3%.
+   - RapidOCR's PP-OCRv4 model occasionally struggles with hand-drawn sound effects (SFX), extreme vertical-rotated text, low-contrast screentones, and ornate gothic typography.
 3. **Complex Non-Grid Panel Layouts:**
-   - While panel-aware sorting handles standard 4-koma and conventional comic grids effectively, avant-garde diagonal panels, full-page bleed artwork, and speech bubbles crossing panel borders can occasionally disrupt ideal reading sequence.
+   - While panel-aware XY-cut sorting handles standard 4-koma and conventional comic grids effectively, avant-garde diagonal panels, full-page bleed artwork, and speech bubbles crossing panel borders can occasionally disrupt ideal reading sequence.
 
 ---
 
-## 12. Artifact Paths Summary
+## 12. Experimental Paradigms & Findings
+
+### Vision-Language Model (VLM) Pilot (`Qwen2-VL-2B-Instruct`)
+- **Objective:** Evaluated whether an open-weight multimodal vision-language model (`Qwen2-VL-2B-Instruct`) could directly solve manga OCR, panel reading order, and transcription end-to-end.
+- **Findings & Comparison:**
+  - *Compute & Latency:* Qwen2-VL required an NVIDIA T4 GPU (~1.8s/page, 4.8 GB VRAM) and projected >24.0s/page on local CPU (20× slower than RapidOCR's 0.58s/page with 63.6 MB RAM).
+  - *Accuracy & Reliability:* On permitted development pages, zero-shot/prompted VLM generation was sensitive to prompt formatting, occasionally hallucinated conversational preambles, and suffered from JSON syntax truncation.
+  - *Decision:* Rejected for production due to extreme compute/memory overhead and lack of improvement over our lightweight CPU-native RapidOCR + layout reading order pipeline.
+  - *Limitations of the Pilot:* The test was an off-the-shelf zero-shot pilot on a small permitted dev sample without task-specific LoRA/SFT fine-tuning. It demonstrates that un-adapted general 2B VLMs on CPU are unsuited for our strict ₹0 budget and low-latency VM constraints, but does not prove that all VLM architectures are intrinsically inferior given fine-tuning and GPU compute.
+  - *Detailed Record:* See [docs/vlm_experiment_report.md](file:///home/neo/Desktop/otakuscan/docs/vlm_experiment_report.md).
+
+### Conversational State Machine Experiment
+- **Objective:** Tested a conversational state machine considering turn cues, proximity protection, and conservative multi-speaker gating against the Strategy F baseline.
+- **Findings:**
+  - On Fold 0 validation (16 sequences), the state machine scored `0.4421` joint F1 (vs. `0.4432` Strategy F baseline), with 0 sequences improved, 15 tied, and 1 regressed.
+  - *Decision:* In accordance with strict experimental protocols, the state machine is preserved as an opt-in class (`src/models/state_machine.py`) without overhead to the default path, while Strategy F remains the active production default.
+
+---
+
+## 13. Artifact Paths Summary
 
 | Artifact | Path | Description |
 | :--- | :--- | :--- |
@@ -254,6 +272,8 @@ While OtakuScan meets all structural submission requirements and significantly o
 | **Validation Evaluation Log** | `logs/adapted_fold0_eval.json` | Official score metrics and runtime log |
 | **Dialogue Filter Weights** | `models/dialogue_filter_weights.json` | Learned L2 logistic regression weights |
 | **Narration Classifier Weights** | `models/narration_classifier_weights.json` | Learned narration classifier weights |
-| **Model Weights Archive** | `models_archive.tar.gz` | Portable 1.8 KB archive of model weights |
+| **Word Segmenter Vocab** | `models/word_segmenter_vocab.json` | Viterbi DP word segmenter unigram vocabulary |
+| **Model Weights Archive** | `models_archive.tar.gz` | Portable archive of model weights |
 | **Development Splits** | `splits/dev_splits.json` | 5-fold cross-validation split definitions |
+| **VLM Pilot Report** | `docs/vlm_experiment_report.md` | Quantitative VLM vs. RapidOCR analysis |
 | **Phase 3 Technical Report** | `docs/phase3_adaptation_report.md` | In-depth adaptation analysis & metrics |

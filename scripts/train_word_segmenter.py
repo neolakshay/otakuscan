@@ -87,7 +87,7 @@ def train_word_segmenter(
 
     # Self-test reloading
     reloaded = WordSegmenter.load_from_json(output_path)
-    test_sample = "socool thenew backinthe together understand HUH?DOES"
+    test_sample = "socool thenew backinthe together understand HUH?DOES TORNAPART THEREMAINSOF"
     segmented = reloaded.segment_text(test_sample)
     print(f"Self-test sample: '{test_sample}' -> '{segmented}'")
     assert "so cool" in segmented, f"Failed split on 'socool': {segmented}"
@@ -95,6 +95,8 @@ def train_word_segmenter(
     assert "together" in segmented, f"Incorrectly split 'together': {segmented}"
     assert "understand" in segmented, f"Incorrectly split 'understand': {segmented}"
     assert "HUH? DOES" in segmented, f"Failed punctuation spacing on 'HUH?DOES': {segmented}"
+    assert "TORN APART" in segmented, f"Failed split on 'TORNAPART': {segmented}"
+    assert "THE REMAINS OF" in segmented, f"Failed split on 'THEREMAINSOF': {segmented}"
 
     return reloaded
 

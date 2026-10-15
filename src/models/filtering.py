@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import string
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -32,6 +33,21 @@ FEATURE_NAMES: List[str] = [
     "punct_ratio",
     "confidence",
     "num_lines",
+]
+
+RE_PRON_1_2 = re.compile(r"\b(i|me|my|mine|myself|we|us|our|ours|you|your|yours|yourself|u)\b", re.I)
+RE_CONV_RESP = re.compile(r"\b(yes|no|yeah|nope|well|huh|what|wait|why|okay|ok|sure|um|uh|ah|oh)\b", re.I)
+RE_NARR_SETTING = re.compile(r"\b(and so|the next day|at the same time|in order to|in other words|in matters of|the result|meanwhile|years later|chapter)\b", re.I)
+RE_PAST_EXPO = re.compile(r"\b(was|were|became|began)\b", re.I)
+
+NARRATION_FEATURE_NAMES: List[str] = list(FEATURE_NAMES) + [
+    "has_question_mark",
+    "has_pronoun_1st_2nd",
+    "has_conversational_response",
+    "has_narrative_setting",
+    "has_past_in_long_sentence",
+    "margin_dist_vertical",
+    "is_wide_aspect_ratio",
 ]
 
 
@@ -105,6 +121,40 @@ def extract_cluster_features(
     ]
 
 
+def extract_narration_features(
+    cluster: Union[TextCluster, DetectedRegion],
+    page_width: float,
+    page_height: float,
+) -> List[float]:
+    """Extracts base cluster features plus curated lexical and geometric features for narration classification."""
+    base = extract_cluster_features(cluster, page_width=page_width, page_height=page_height)
+    pw = max(float(page_width), 1.0)
+    ph = max(float(page_height), 1.0)
+    bbox = cluster.bbox
+
+    text = (cluster.text or "").strip()
+    words = text.split()
+    n_words = len(words)
+
+    has_q = 1.0 if ("?" in text or "？" in text) else 0.0
+    has_pron_1_2 = 1.0 if RE_PRON_1_2.search(text) else 0.0
+    has_conv_resp = 1.0 if RE_CONV_RESP.search(text) else 0.0
+    has_setting = 1.0 if RE_NARR_SETTING.search(text) else 0.0
+    has_past_long = 1.0 if (RE_PAST_EXPO.search(text) and n_words >= 5) else 0.0
+    margin_top_bot = min(float(bbox.ymin) / ph, 1.0 - float(bbox.ymax) / ph)
+    is_wide = 1.0 if (float(bbox.width) / max(float(bbox.height), 1.0) > 1.2) else 0.0
+
+    return base + [
+        has_q,
+        has_pron_1_2,
+        has_conv_resp,
+        has_setting,
+        has_past_long,
+        margin_top_bot,
+        is_wide,
+    ]
+
+
 @dataclass
 class FilterModelConfig:
     threshold: float = 0.35
@@ -129,8 +179,14 @@ class LearnedClusterClassifier:
         self.feature_names: List[str] = list(FEATURE_NAMES)
         self.is_fitted: bool = False
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> LearnedClusterClassifier:
-        """Fits weights using L2-regularized binary cross-entropy minimization."""
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        sample_weight: Optional[np.ndarray] = None,
+        class_weight: Optional[str] = None,
+    ) -> LearnedClusterClassifier:
+        """Fits weights using L2-regularized binary cross-entropy minimization, with optional class weighting."""
         X_arr = np.asarray(X, dtype=float)
         y_arr = np.asarray(y, dtype=float)
 
@@ -141,15 +197,28 @@ class LearnedClusterClassifier:
         X_norm = (X_arr - self.mean) / self.std
         n_samples, n_features = X_norm.shape
 
+        if class_weight == "balanced":
+            n_pos = np.sum(y_arr == 1.0)
+            n_neg = np.sum(y_arr == 0.0)
+            n_tot = len(y_arr)
+            w_pos = n_tot / (2.0 * max(n_pos, 1.0))
+            w_neg = n_tot / (2.0 * max(n_neg, 1.0))
+            weights = np.where(y_arr == 1.0, w_pos, w_neg)
+        elif sample_weight is not None:
+            weights = np.asarray(sample_weight, dtype=float)
+        else:
+            weights = np.ones(n_samples, dtype=float)
+
+        tot_w = float(np.sum(weights))
+
         def loss_and_grad(theta: np.ndarray) -> Tuple[float, np.ndarray]:
             w = theta[:-1]
             b = theta[-1]
             logits = np.dot(X_norm, w) + b
-            # Numerically stable binary cross-entropy with L2 penalty
-            loss = np.mean(np.logaddexp(0.0, logits) - y_arr * logits) + 0.5 * self.l2_reg * np.sum(w ** 2)
+            loss = np.sum(weights * (np.logaddexp(0.0, logits) - y_arr * logits)) / tot_w + 0.5 * self.l2_reg * np.sum(w ** 2)
             probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -25.0, 25.0)))
-            grad_w = np.mean((probs - y_arr)[:, None] * X_norm, axis=0) + self.l2_reg * w
-            grad_b = np.mean(probs - y_arr)
+            grad_w = np.sum((weights * (probs - y_arr))[:, None] * X_norm, axis=0) / tot_w + self.l2_reg * w
+            grad_b = np.sum(weights * (probs - y_arr)) / tot_w
             return float(loss), np.append(grad_w, grad_b)
 
         init_theta = np.zeros(n_features + 1, dtype=float)
@@ -227,7 +296,22 @@ class LearnedNarrationClassifier(LearnedClusterClassifier):
         l2_reg: float = 0.01,
         decision_threshold: float = 0.50,
         threshold: Optional[float] = None,
+        feature_names: Optional[List[str]] = None,
     ) -> None:
         thresh = threshold if threshold is not None else decision_threshold
         super().__init__(l2_reg=l2_reg, decision_threshold=thresh)
+        if feature_names is not None:
+            self.feature_names = list(feature_names)
+
+    def extract_features(
+        self,
+        cluster: Union[TextCluster, DetectedRegion],
+        page_width: float,
+        page_height: float,
+    ) -> List[float]:
+        """Extracts features appropriate for this classifier's expected feature set."""
+        if len(self.feature_names) == len(NARRATION_FEATURE_NAMES):
+            return extract_narration_features(cluster, page_width, page_height)
+        return extract_cluster_features(cluster, page_width, page_height)
+
 
